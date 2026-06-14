@@ -14,6 +14,7 @@ final class QuotaRefreshController: ObservableObject {
     private let collector = CodexQuotaCollector()
     private let store = QuotaSnapshotStore.defaultStore()
     private let logger = Logger(subsystem: "com.guohuaz.CodexQuota", category: "Refresh")
+    private let widgetKind = "CodexQuotaWidget"
     private var timer: Timer?
     private var watchers: [FolderWatcher] = []
     private var pendingRefreshTask: Task<Void, Never>?
@@ -63,7 +64,7 @@ final class QuotaRefreshController: ObservableObject {
         do {
             try store.save(stableSnapshot)
             snapshot = stableSnapshot.markingStaleIfNeeded()
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadWidgetTimelines()
             logger.info("Saved snapshot and reloaded widget timelines")
         } catch {
             if snapshot.hasDisplayableQuotaData {
@@ -73,6 +74,11 @@ final class QuotaRefreshController: ObservableObject {
             }
             logger.error("Failed to save snapshot: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func reloadWidgetTimelines() {
+        WidgetCenter.shared.reloadTimelines(ofKind: widgetKind)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     func chooseCodexFolder() {

@@ -45,6 +45,7 @@ codesign --verify --deep --strict --verbose=2 "${BUILT_APP}" >/dev/null
 echo "Installing to ${INSTALLED_APP}..."
 mkdir -p "${INSTALL_DIR}"
 pkill -x CodexQuota 2>/dev/null || true
+pkill -x CodexQuotaWidget 2>/dev/null || true
 rm -rf "${INSTALLED_APP}"
 ditto "${BUILT_APP}" "${INSTALLED_APP}"
 
