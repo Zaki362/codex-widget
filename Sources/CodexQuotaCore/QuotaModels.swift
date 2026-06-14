@@ -56,6 +56,38 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
         return copy
     }
 
+    public func preservingStableValues(from previous: QuotaSnapshot, now: Date = Date()) -> QuotaSnapshot {
+        guard previous.hasDisplayableQuotaData else {
+            return self
+        }
+
+        if status == .empty || status == .error {
+            return previous.markingStaleIfNeeded(now: now)
+        }
+
+        guard status == .ready else {
+            return self
+        }
+
+        if !hasDisplayableLimitData && previous.hasDisplayableLimitData {
+            return previous.markingStaleIfNeeded(now: now)
+        }
+
+        if hasSuspiciousFullQuotaReset(comparedTo: previous) {
+            return previous.markingStaleIfNeeded(now: now)
+        }
+
+        return self
+    }
+
+    public var hasDisplayableQuotaData: Bool {
+        hasDisplayableLimitData || trend.contains { $0.tokens > 0 }
+    }
+
+    public var hasDisplayableLimitData: Bool {
+        limits.contains { $0.remainingPercent != nil }
+    }
+
     public static func placeholder(now: Date = Date()) -> QuotaSnapshot {
         QuotaSnapshot(
             updatedAt: now,
@@ -78,6 +110,26 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
             source: SnapshotSource(rootPath: rootPath, scannedFileCount: 0, parsedEventCount: 0, latestEventAt: nil),
             message: message
         )
+    }
+
+    private func hasSuspiciousFullQuotaReset(comparedTo previous: QuotaSnapshot) -> Bool {
+        for limit in limits {
+            guard let remaining = limit.remainingPercent,
+                  remaining >= 99.5,
+                  let previousLimit = previous.limits.first(where: { $0.id == limit.id }),
+                  let previousRemaining = previousLimit.remainingPercent,
+                  previousRemaining < 99.5,
+                  let previousReset = previousLimit.resetsAt
+            else {
+                continue
+            }
+
+            if updatedAt < previousReset || limit.resetsAt == previousReset {
+                return true
+            }
+        }
+
+        return false
     }
 }
 

@@ -4,6 +4,7 @@ public struct RolloutTokenEvent: Equatable, Sendable {
     public var timestamp: Date
     public var lastTotalTokens: Int
     public var cumulativeTotalTokens: Int
+    public var limitID: String?
     public var primary: RolloutRateLimitWindow?
     public var secondary: RolloutRateLimitWindow?
 
@@ -11,19 +12,21 @@ public struct RolloutTokenEvent: Equatable, Sendable {
         timestamp: Date,
         lastTotalTokens: Int,
         cumulativeTotalTokens: Int,
+        limitID: String? = nil,
         primary: RolloutRateLimitWindow?,
         secondary: RolloutRateLimitWindow?
     ) {
         self.timestamp = timestamp
         self.lastTotalTokens = max(0, lastTotalTokens)
         self.cumulativeTotalTokens = max(0, cumulativeTotalTokens)
+        self.limitID = limitID
         self.primary = primary
         self.secondary = secondary
     }
 
     public var duplicateKey: String {
         let milliseconds = Int((timestamp.timeIntervalSince1970 * 1_000).rounded())
-        return "\(milliseconds)|\(lastTotalTokens)|\(cumulativeTotalTokens)"
+        return "\(milliseconds)|\(lastTotalTokens)|\(cumulativeTotalTokens)|\(limitID ?? "")"
     }
 }
 
@@ -80,6 +83,7 @@ public enum RolloutLogParser {
                 timestamp: envelope.timestamp,
                 lastTotalTokens: info?.lastTokenUsage.totalTokens ?? 0,
                 cumulativeTotalTokens: info?.totalTokenUsage.totalTokens ?? 0,
+                limitID: rateLimits?.limitID,
                 primary: primary,
                 secondary: secondary
             )
@@ -160,8 +164,15 @@ private struct RolloutTokenUsage: Decodable {
 }
 
 private struct RolloutRateLimits: Decodable {
+    var limitID: String?
     var primary: RolloutRateLimitWindowPayload?
     var secondary: RolloutRateLimitWindowPayload?
+
+    enum CodingKeys: String, CodingKey {
+        case limitID = "limit_id"
+        case primary
+        case secondary
+    }
 }
 
 private struct RolloutRateLimitWindowPayload: Decodable {

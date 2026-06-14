@@ -40,7 +40,7 @@ public struct CodexQuotaCollector: Sendable {
 
         let sortedEvents = events.sorted { $0.timestamp < $1.timestamp }
         let latestEventAt = sortedEvents.last?.timestamp
-        let latestRateLimitEvent = sortedEvents.last { $0.primary != nil || $0.secondary != nil }
+        let latestRateLimitEvent = latestCodexRateLimitEvent(in: sortedEvents)
         let trend = buildTrend(from: events, now: now, calendar: calendar)
         let dailyAverage = trend.isEmpty ? 0 : trend.reduce(0) { $0 + $1.tokens } / trend.count
 
@@ -57,6 +57,13 @@ public struct CodexQuotaCollector: Sendable {
             source: SnapshotSource(rootPath: rootPath, scannedFileCount: files.count, parsedEventCount: events.count, latestEventAt: latestEventAt),
             message: message
         )
+    }
+
+    private func latestCodexRateLimitEvent(in sortedEvents: [RolloutTokenEvent]) -> RolloutTokenEvent? {
+        let rateLimitEvents = sortedEvents.filter { $0.primary != nil || $0.secondary != nil }
+        return rateLimitEvents.last { $0.limitID == "codex" }
+            ?? rateLimitEvents.last { $0.limitID == nil }
+            ?? rateLimitEvents.last
     }
 
     private func buildLimits(from event: RolloutTokenEvent?) -> [QuotaLimit] {

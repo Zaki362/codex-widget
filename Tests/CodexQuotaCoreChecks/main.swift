@@ -31,9 +31,11 @@ struct CodexQuotaCoreChecks {
         let checks = CodexQuotaCoreChecks()
         try checks.parseTokenCountLineWithRateLimits()
         try checks.collectorBuildsFiveDayTrendAndDeduplicatesArchivedCopy()
+        try checks.collectorPrefersCodexRateLimitOverModelSpecificLimit()
         try checks.collectorHandlesMissingRateLimitData()
         try checks.parserHandlesPayloadRateLimitsWithNullInfo()
         try checks.collectorIgnoresMalformedLinesAndReportsEmptyData()
+        try checks.snapshotPreservesPreviousValuesWhenRefreshIsUnreliable()
         try checks.resetLabelUsesTimeTodayAndDateForLaterDay()
         try checks.snapshotStoreWritesAndLoadsMirrorURLs()
         print("CodexQuotaCoreChecks passed")
@@ -96,6 +98,37 @@ struct CodexQuotaCoreChecks {
         try check(snapshot.dailyAverageTokens == 120, "daily average mismatch")
     }
 
+    func collectorPrefersCodexRateLimitOverModelSpecificLimit() throws {
+        let root = try makeTemporaryCodexRoot()
+        let timestamp = "2026-06-13T08:00:00.000Z"
+        let contents = tokenLine(
+            timestamp: timestamp,
+            lastTotal: 300,
+            cumulativeTotal: 600,
+            primaryUsed: 0,
+            secondaryUsed: 0,
+            limitID: "codex_bengalfox"
+        )
+            + "\n"
+            + tokenLine(
+                timestamp: timestamp,
+                lastTotal: 300,
+                cumulativeTotal: 600,
+                primaryUsed: 42,
+                secondaryUsed: 11,
+                limitID: "codex"
+            )
+
+        try writeFile(root: root, path: "sessions/2026/06/13/rollout-current.jsonl", contents: contents)
+
+        let snapshot = CodexQuotaCollector().collect(from: root, now: date("2026-06-13T12:00:00.000Z"), calendar: utcCalendar)
+
+        try check(snapshot.status == .ready, "snapshot should be ready")
+        try check(snapshot.source.parsedEventCount == 2, "rate limits with different ids should not deduplicate")
+        try check(snapshot.limits[0].remainingPercent == 58, "collector should prefer codex primary rate limit")
+        try check(snapshot.limits[1].remainingPercent == 89, "collector should prefer codex secondary rate limit")
+    }
+
     func collectorHandlesMissingRateLimitData() throws {
         let root = try makeTemporaryCodexRoot()
         try writeFile(
@@ -152,6 +185,43 @@ struct CodexQuotaCoreChecks {
         try check(snapshot.status == .empty, "bad-only logs should be empty")
         try check(snapshot.source.scannedFileCount == 1, "bad-only scanned file count mismatch")
         try check(snapshot.source.parsedEventCount == 0, "bad-only parsed event count mismatch")
+    }
+
+    func snapshotPreservesPreviousValuesWhenRefreshIsUnreliable() throws {
+        let previous = QuotaSnapshot(
+            updatedAt: date("2026-06-13T08:00:00.000Z"),
+            status: .ready,
+            limits: [
+                QuotaLimit(id: "primary", label: "5小时", usedPercent: 25, resetsAt: date("2026-06-13T12:15:34.000Z"), windowMinutes: 300),
+                QuotaLimit(id: "secondary", label: "周限额", usedPercent: 24, resetsAt: date("2026-06-18T06:51:17.000Z"), windowMinutes: 10_080)
+            ],
+            trend: [
+                DailyTokenUsage(dayKey: "2026-06-13", label: "06-13", tokens: 140_415_700)
+            ],
+            dailyAverageTokens: 140_415_700,
+            source: SnapshotSource(rootPath: "~/.codex", scannedFileCount: 77, parsedEventCount: 12_962, latestEventAt: date("2026-06-13T07:54:49.000Z"))
+        )
+
+        let emptyRefresh = QuotaSnapshot.placeholder(now: date("2026-06-13T08:05:00.000Z"))
+        let preservedEmpty = emptyRefresh.preservingStableValues(from: previous, now: date("2026-06-13T08:05:00.000Z"))
+        try check(preservedEmpty.limits[0].remainingPercent == 75, "empty refresh should preserve previous primary quota")
+        try check(preservedEmpty.dailyAverageTokens == 140_415_700, "empty refresh should preserve previous trend data")
+
+        let suspiciousFullRefresh = QuotaSnapshot(
+            updatedAt: date("2026-06-13T08:05:00.000Z"),
+            status: .ready,
+            limits: [
+                QuotaLimit(id: "primary", label: "5小时", usedPercent: 0, resetsAt: date("2026-06-13T12:15:34.000Z"), windowMinutes: 300),
+                QuotaLimit(id: "secondary", label: "周限额", usedPercent: 24, resetsAt: date("2026-06-18T06:51:17.000Z"), windowMinutes: 10_080)
+            ],
+            trend: [
+                DailyTokenUsage(dayKey: "2026-06-13", label: "06-13", tokens: 140_500_000)
+            ],
+            dailyAverageTokens: 140_500_000,
+            source: SnapshotSource(rootPath: "~/.codex", scannedFileCount: 78, parsedEventCount: 12_963, latestEventAt: date("2026-06-13T08:04:59.000Z"))
+        )
+        let preservedSuspicious = suspiciousFullRefresh.preservingStableValues(from: previous, now: date("2026-06-13T08:05:00.000Z"))
+        try check(preservedSuspicious.limits[0].remainingPercent == 75, "suspicious full refresh should preserve previous primary quota")
     }
 
     func resetLabelUsesTimeTodayAndDateForLaterDay() throws {
@@ -225,7 +295,8 @@ struct CodexQuotaCoreChecks {
         cumulativeTotal: Int,
         primaryUsed: Double? = nil,
         secondaryUsed: Double? = nil,
-        includeRateLimits: Bool = true
+        includeRateLimits: Bool = true,
+        limitID: String = "codex"
     ) -> String {
         var root: [String: Any] = [
             "timestamp": timestamp,
@@ -242,6 +313,7 @@ struct CodexQuotaCoreChecks {
 
         if includeRateLimits {
             var rateLimits: [String: Any] = [:]
+            rateLimits["limit_id"] = limitID
             if let primaryUsed {
                 rateLimits["primary"] = [
                     "used_percent": primaryUsed,

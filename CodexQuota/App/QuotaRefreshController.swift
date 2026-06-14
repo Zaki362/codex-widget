@@ -57,15 +57,20 @@ final class QuotaRefreshController: ObservableObject {
         let collected = await Task.detached(priority: .utility) {
             CodexQuotaCollector().collect(from: url)
         }.value
-        logger.info("Collected snapshot status=\(collected.status.rawValue, privacy: .public) files=\(collected.source.scannedFileCount) events=\(collected.source.parsedEventCount)")
+        let stableSnapshot = collected.preservingStableValues(from: snapshot)
+        logger.info("Collected snapshot status=\(collected.status.rawValue, privacy: .public) stableStatus=\(stableSnapshot.status.rawValue, privacy: .public) files=\(collected.source.scannedFileCount) events=\(collected.source.parsedEventCount)")
 
         do {
-            try store.save(collected)
-            snapshot = collected.markingStaleIfNeeded()
+            try store.save(stableSnapshot)
+            snapshot = stableSnapshot.markingStaleIfNeeded()
             WidgetCenter.shared.reloadAllTimelines()
             logger.info("Saved snapshot and reloaded widget timelines")
         } catch {
-            snapshot = .error("无法写入共享快照：\(error.localizedDescription)", rootPath: url.path)
+            if snapshot.hasDisplayableQuotaData {
+                snapshot = snapshot.markingStaleIfNeeded()
+            } else {
+                snapshot = .error("无法写入共享快照：\(error.localizedDescription)", rootPath: url.path)
+            }
             logger.error("Failed to save snapshot: \(error.localizedDescription, privacy: .public)")
         }
     }
