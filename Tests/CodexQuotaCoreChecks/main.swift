@@ -36,6 +36,7 @@ struct CodexQuotaCoreChecks {
         try checks.parserHandlesPayloadRateLimitsWithNullInfo()
         try checks.collectorIgnoresMalformedLinesAndReportsEmptyData()
         try checks.snapshotPreservesPreviousValuesWhenRefreshIsUnreliable()
+        try checks.scannerKeepsRecentHistoryAndActiveLongRunningSessions()
         try checks.resetLabelUsesTimeTodayAndDateForLaterDay()
         try checks.snapshotStoreWritesAndLoadsMirrorURLs()
         print("CodexQuotaCoreChecks passed")
@@ -224,6 +225,28 @@ struct CodexQuotaCoreChecks {
         try check(preservedSuspicious.limits[0].remainingPercent == 75, "suspicious full refresh should preserve previous primary quota")
     }
 
+    func scannerKeepsRecentHistoryAndActiveLongRunningSessions() throws {
+        let root = try makeTemporaryCodexRoot()
+        let now = date("2026-06-13T12:00:00.000Z")
+        let inactiveModifiedAt = date("2026-06-12T10:59:00.000Z")
+        let activeModifiedAt = date("2026-06-13T11:59:00.000Z")
+
+        try writeFile(root: root, path: "sessions/2026/06/13/rollout-current.jsonl", contents: "{}")
+        try writeFile(root: root, path: "sessions/2026/05/10/rollout-2026-05-10T08-00-00-inactive.jsonl", contents: "{}")
+        try setModificationDate(root: root, path: "sessions/2026/05/10/rollout-2026-05-10T08-00-00-inactive.jsonl", date: inactiveModifiedAt)
+        try writeFile(root: root, path: "sessions/2026/05/10/rollout-2026-05-10T08-00-00-active.jsonl", contents: "{}")
+        try setModificationDate(root: root, path: "sessions/2026/05/10/rollout-2026-05-10T08-00-00-active.jsonl", date: activeModifiedAt)
+        try writeFile(root: root, path: "archived_sessions/rollout-archived.jsonl", contents: "{}")
+
+        let files = RolloutLogScanner().rolloutFiles(in: root, now: now)
+        let paths = files.map(\.path)
+
+        try check(paths.contains { $0.contains("sessions/2026/06/13/rollout-current.jsonl") }, "recent session rollout should be included")
+        try check(paths.contains { $0.contains("sessions/2026/05/10/rollout-2026-05-10T08-00-00-active.jsonl") }, "active long-running session should be included")
+        try check(paths.contains { $0.contains("archived_sessions/rollout-archived.jsonl") }, "undated recent archived rollout should use mtime fallback")
+        try check(!paths.contains { $0.contains("rollout-2026-05-10T08-00-00-inactive.jsonl") }, "inactive old rollout date should be skipped")
+    }
+
     func resetLabelUsesTimeTodayAndDateForLaterDay() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
@@ -283,6 +306,11 @@ struct CodexQuotaCoreChecks {
         let url = root.appendingPathComponent(path)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func setModificationDate(root: URL, path: String, date: Date) throws {
+        let url = root.appendingPathComponent(path)
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
     }
 
     private func date(_ value: String) -> Date {

@@ -11,10 +11,14 @@ final class QuotaRefreshController: ObservableObject {
     @Published var launchAtLoginEnabled: Bool
 
     private let folderAccess = FolderAccessManager()
-    private let collector = CodexQuotaCollector()
+    private let collector = CodexQuotaCollector(eventCache: RolloutParsedEventCache())
     private let store = QuotaSnapshotStore.defaultStore()
     private let logger = Logger(subsystem: "com.guohuaz.CodexQuota", category: "Refresh")
     private let widgetKind = "CodexQuotaWidget"
+    private let activeRefreshInterval: TimeInterval = 60
+    private let idleRefreshInterval: TimeInterval = 15 * 60
+    private let activeEventWindow: TimeInterval = 5 * 60
+    private let watcherDebounceSeconds: Duration = .seconds(5)
     private var timer: Timer?
     private var watchers: [FolderWatcher] = []
     private var pendingRefreshTask: Task<Void, Never>?
@@ -34,12 +38,21 @@ final class QuotaRefreshController: ObservableObject {
                 await self?.refresh()
             }
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: activeRefreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.refresh()
+                await self?.refreshIfNeeded()
             }
         }
         rebuildWatchers()
+    }
+
+    func refreshIfNeeded(now: Date = Date()) async {
+        guard shouldRunScheduledRefresh(now: now) else {
+            logger.debug("Skipped scheduled refresh while Codex logs are idle")
+            return
+        }
+
+        await refresh()
     }
 
     func refresh() async {
@@ -55,8 +68,9 @@ final class QuotaRefreshController: ObservableObject {
             }
         }
 
+        let collector = collector
         let collected = await Task.detached(priority: .utility) {
-            CodexQuotaCollector().collect(from: url)
+            collector.collect(from: url)
         }.value
         let stableSnapshot = collected.preservingStableValues(from: snapshot)
         logger.info("Collected snapshot status=\(collected.status.rawValue, privacy: .public) stableStatus=\(stableSnapshot.status.rawValue, privacy: .public) files=\(collected.source.scannedFileCount) events=\(collected.source.parsedEventCount)")
@@ -79,6 +93,22 @@ final class QuotaRefreshController: ObservableObject {
     private func reloadWidgetTimelines() {
         WidgetCenter.shared.reloadTimelines(ofKind: widgetKind)
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func shouldRunScheduledRefresh(now: Date) -> Bool {
+        switch snapshot.status {
+        case .empty, .error:
+            return true
+        case .ready, .stale:
+            break
+        }
+
+        if let latestEventAt = snapshot.source.latestEventAt,
+           now.timeIntervalSince(latestEventAt) <= activeEventWindow {
+            return true
+        }
+
+        return now.timeIntervalSince(snapshot.updatedAt) >= idleRefreshInterval
     }
 
     func chooseCodexFolder() {
@@ -123,8 +153,9 @@ final class QuotaRefreshController: ObservableObject {
 
     private func scheduleRefreshSoon() {
         pendingRefreshTask?.cancel()
+        let debounce = watcherDebounceSeconds
         pendingRefreshTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
             await self?.refresh()
         }
