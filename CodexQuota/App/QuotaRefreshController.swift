@@ -12,6 +12,7 @@ final class QuotaRefreshController: ObservableObject {
 
     private let folderAccess = FolderAccessManager()
     private let collector = CodexQuotaCollector(eventCache: RolloutParsedEventCache())
+    private let activityScanner = RolloutLogScanner()
     private let store = QuotaSnapshotStore.defaultStore()
     private let logger = Logger(subsystem: "com.guohuaz.CodexQuota", category: "Refresh")
     private let widgetKind = "CodexQuotaWidget"
@@ -108,7 +109,29 @@ final class QuotaRefreshController: ObservableObject {
             return true
         }
 
+        if hasRolloutLogChanges(since: snapshot.updatedAt, now: now) {
+            return true
+        }
+
         return now.timeIntervalSince(snapshot.updatedAt) >= idleRefreshInterval
+    }
+
+    private func hasRolloutLogChanges(since date: Date, now: Date) -> Bool {
+        let url = codexFolderURL
+        let accessGranted = folderAccess.startAccessing(url)
+        defer {
+            if accessGranted {
+                folderAccess.stopAccessing(url)
+            }
+        }
+
+        return activityScanner.rolloutFiles(in: url, now: now).contains { file in
+            guard let modifiedAt = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
+                return false
+            }
+
+            return modifiedAt > date
+        }
     }
 
     func chooseCodexFolder() {
@@ -138,9 +161,8 @@ final class QuotaRefreshController: ObservableObject {
 
     private func rebuildWatchers() {
         watchers.removeAll()
-        let sessions = codexFolderURL.appendingPathComponent("sessions", isDirectory: true)
-        let archived = codexFolderURL.appendingPathComponent("archived_sessions", isDirectory: true)
-        for url in [codexFolderURL, sessions, archived] where FileManager.default.fileExists(atPath: url.path) {
+        let urls = watchedDirectories()
+        for url in urls {
             if let watcher = FolderWatcher(url: url, onChange: { [weak self] in
                 Task { @MainActor in
                     self?.scheduleRefreshSoon()
@@ -151,12 +173,48 @@ final class QuotaRefreshController: ObservableObject {
         }
     }
 
+    private func watchedDirectories() -> [URL] {
+        let sessions = codexFolderURL.appendingPathComponent("sessions", isDirectory: true)
+        let archived = codexFolderURL.appendingPathComponent("archived_sessions", isDirectory: true)
+        var urls: [URL] = []
+        var seen = Set<String>()
+
+        func appendDirectory(_ url: URL) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return
+            }
+            let path = url.standardizedFileURL.path
+            guard seen.insert(path).inserted else {
+                return
+            }
+            urls.append(url)
+        }
+
+        [codexFolderURL, sessions, archived].forEach(appendDirectory)
+
+        if let enumerator = FileManager.default.enumerator(
+            at: sessions,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let directoryURL as URL in enumerator {
+                guard (try? directoryURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                    continue
+                }
+                appendDirectory(directoryURL)
+            }
+        }
+
+        return urls
+    }
+
     private func scheduleRefreshSoon() {
         pendingRefreshTask?.cancel()
         let debounce = watcherDebounceSeconds
         pendingRefreshTask = Task { [weak self] in
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
+            self?.rebuildWatchers()
             await self?.refresh()
         }
     }
