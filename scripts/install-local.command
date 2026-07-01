@@ -8,6 +8,7 @@ BUILD_DIR="${ROOT_DIR}/build/DerivedData"
 BUILT_APP="${BUILD_DIR}/Build/Products/Release/${APP_NAME}"
 INSTALL_DIR="${HOME}/Applications"
 INSTALLED_APP="${INSTALL_DIR}/${APP_NAME}"
+LEGACY_APP="/Applications/${APP_NAME}"
 
 cd "${ROOT_DIR}"
 
@@ -46,6 +47,14 @@ echo "Installing to ${INSTALLED_APP}..."
 mkdir -p "${INSTALL_DIR}"
 pkill -x CodexQuota 2>/dev/null || true
 pkill -x CodexQuotaWidget 2>/dev/null || true
+if [[ -d "${LEGACY_APP}" && "${LEGACY_APP}" != "${INSTALLED_APP}" ]]; then
+  echo "Removing legacy install at ${LEGACY_APP}..."
+  if ! rm -rf "${LEGACY_APP}" 2>/dev/null; then
+    echo "Could not remove ${LEGACY_APP}."
+    echo "If widgets still load an old version, run:"
+    echo "  sudo rm -rf '${LEGACY_APP}'"
+  fi
+fi
 rm -rf "${INSTALLED_APP}"
 ditto "${BUILT_APP}" "${INSTALLED_APP}"
 

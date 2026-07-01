@@ -36,6 +36,8 @@ struct CodexQuotaCoreChecks {
         try checks.parserHandlesPayloadRateLimitsWithNullInfo()
         try checks.collectorIgnoresMalformedLinesAndReportsEmptyData()
         try checks.snapshotPreservesPreviousValuesWhenRefreshIsUnreliable()
+        try checks.snapshotAcceptsQuotaResetAfterPreviousWindowExpired()
+        try checks.snapshotPreservesOnlySuspiciousLimit()
         try checks.scannerKeepsRecentHistoryAndActiveLongRunningSessions()
         try checks.resetLabelUsesTimeTodayAndDateForLaterDay()
         try checks.snapshotStoreWritesAndLoadsMirrorURLs()
@@ -223,6 +225,76 @@ struct CodexQuotaCoreChecks {
         )
         let preservedSuspicious = suspiciousFullRefresh.preservingStableValues(from: previous, now: date("2026-06-13T08:05:00.000Z"))
         try check(preservedSuspicious.limits[0].remainingPercent == 75, "suspicious full refresh should preserve previous primary quota")
+    }
+
+    func snapshotAcceptsQuotaResetAfterPreviousWindowExpired() throws {
+        let previous = QuotaSnapshot(
+            updatedAt: date("2026-07-01T01:38:14.000Z"),
+            status: .ready,
+            limits: [
+                QuotaLimit(id: "primary", label: "5小时", usedPercent: 7, resetsAt: date("2026-06-30T11:46:48.000Z"), windowMinutes: 300),
+                QuotaLimit(id: "secondary", label: "周限额", usedPercent: 8, resetsAt: date("2026-07-07T01:45:18.000Z"), windowMinutes: 10_080)
+            ],
+            trend: [
+                DailyTokenUsage(dayKey: "2026-07-01", label: "07-01", tokens: 24_000_000)
+            ],
+            dailyAverageTokens: 24_000_000,
+            source: SnapshotSource(rootPath: "~/.codex", scannedFileCount: 27, parsedEventCount: 3_067, latestEventAt: date("2026-07-01T01:38:06.000Z"))
+        )
+
+        let current = QuotaSnapshot(
+            updatedAt: date("2026-07-01T01:39:14.000Z"),
+            status: .ready,
+            limits: [
+                QuotaLimit(id: "primary", label: "5小时", usedPercent: 0, resetsAt: date("2026-07-01T06:37:05.000Z"), windowMinutes: 300),
+                QuotaLimit(id: "secondary", label: "周限额", usedPercent: 26, resetsAt: date("2026-07-07T01:45:18.000Z"), windowMinutes: 10_080)
+            ],
+            trend: [
+                DailyTokenUsage(dayKey: "2026-07-01", label: "07-01", tokens: 25_000_000)
+            ],
+            dailyAverageTokens: 25_000_000,
+            source: SnapshotSource(rootPath: "~/.codex", scannedFileCount: 28, parsedEventCount: 3_070, latestEventAt: date("2026-07-01T01:38:33.000Z"))
+        )
+
+        let stable = current.preservingStableValues(from: previous, now: date("2026-07-01T01:39:14.000Z"))
+        try check(stable.limits[0].remainingPercent == 100, "expired previous window should accept new primary reset")
+        try check(stable.limits[1].remainingPercent == 74, "expired previous window should accept current secondary quota")
+        try check(stable.source.parsedEventCount == 3_070, "current source should be kept after real reset")
+    }
+
+    func snapshotPreservesOnlySuspiciousLimit() throws {
+        let previous = QuotaSnapshot(
+            updatedAt: date("2026-06-13T08:00:00.000Z"),
+            status: .ready,
+            limits: [
+                QuotaLimit(id: "primary", label: "5小时", usedPercent: 25, resetsAt: date("2026-06-13T12:15:34.000Z"), windowMinutes: 300),
+                QuotaLimit(id: "secondary", label: "周限额", usedPercent: 8, resetsAt: date("2026-06-18T06:51:17.000Z"), windowMinutes: 10_080)
+            ],
+            trend: [
+                DailyTokenUsage(dayKey: "2026-06-13", label: "06-13", tokens: 140_415_700)
+            ],
+            dailyAverageTokens: 140_415_700,
+            source: SnapshotSource(rootPath: "~/.codex", scannedFileCount: 77, parsedEventCount: 12_962, latestEventAt: date("2026-06-13T07:54:49.000Z"))
+        )
+
+        let current = QuotaSnapshot(
+            updatedAt: date("2026-06-13T08:05:00.000Z"),
+            status: .ready,
+            limits: [
+                QuotaLimit(id: "primary", label: "5小时", usedPercent: 0, resetsAt: date("2026-06-13T12:15:34.000Z"), windowMinutes: 300),
+                QuotaLimit(id: "secondary", label: "周限额", usedPercent: 26, resetsAt: date("2026-06-18T06:51:17.000Z"), windowMinutes: 10_080)
+            ],
+            trend: [
+                DailyTokenUsage(dayKey: "2026-06-13", label: "06-13", tokens: 140_500_000)
+            ],
+            dailyAverageTokens: 140_500_000,
+            source: SnapshotSource(rootPath: "~/.codex", scannedFileCount: 78, parsedEventCount: 12_963, latestEventAt: date("2026-06-13T08:04:59.000Z"))
+        )
+
+        let stable = current.preservingStableValues(from: previous, now: date("2026-06-13T08:05:00.000Z"))
+        try check(stable.limits[0].remainingPercent == 75, "suspicious primary reset should preserve only primary")
+        try check(stable.limits[1].remainingPercent == 74, "non-suspicious secondary should keep current quota")
+        try check(stable.dailyAverageTokens == 140_500_000, "current trend should not be rolled back by one suspicious limit")
     }
 
     func scannerKeepsRecentHistoryAndActiveLongRunningSessions() throws {

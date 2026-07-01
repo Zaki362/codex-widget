@@ -73,11 +73,11 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
             return previous.markingStaleIfNeeded(now: now)
         }
 
-        if hasSuspiciousFullQuotaReset(comparedTo: previous) {
-            return previous.markingStaleIfNeeded(now: now)
+        var copy = self
+        copy.limits = limits.map { limit in
+            stableLimit(for: limit, from: previous, now: now)
         }
-
-        return self
+        return copy
     }
 
     public var hasDisplayableQuotaData: Bool {
@@ -112,24 +112,28 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
         )
     }
 
-    private func hasSuspiciousFullQuotaReset(comparedTo previous: QuotaSnapshot) -> Bool {
-        for limit in limits {
-            guard let remaining = limit.remainingPercent,
-                  remaining >= 99.5,
-                  let previousLimit = previous.limits.first(where: { $0.id == limit.id }),
-                  let previousRemaining = previousLimit.remainingPercent,
-                  previousRemaining < 99.5,
-                  let previousReset = previousLimit.resetsAt
-            else {
-                continue
-            }
-
-            if updatedAt < previousReset || limit.resetsAt == previousReset {
-                return true
-            }
+    private func stableLimit(for limit: QuotaLimit, from previous: QuotaSnapshot, now: Date) -> QuotaLimit {
+        guard let remaining = limit.remainingPercent,
+              remaining >= 99.5,
+              let previousLimit = previous.limits.first(where: { $0.id == limit.id }),
+              let previousRemaining = previousLimit.remainingPercent,
+              previousRemaining < 99.5,
+              let previousReset = previousLimit.resetsAt
+        else {
+            return limit
         }
 
-        return false
+        if now >= previousReset {
+            return limit
+        }
+
+        if let currentReset = limit.resetsAt,
+           currentReset != previousReset,
+           currentReset > now {
+            return limit
+        }
+
+        return previousLimit
     }
 }
 
