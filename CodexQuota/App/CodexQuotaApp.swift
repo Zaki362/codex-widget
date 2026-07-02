@@ -44,4 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await refreshController.refresh()
         }
     }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Task { @MainActor [refreshController] in
+            await refreshController.refresh()
+        }
+        return false
+    }
 }

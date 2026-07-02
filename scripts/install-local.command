@@ -9,6 +9,7 @@ BUILT_APP="${BUILD_DIR}/Build/Products/Release/${APP_NAME}"
 INSTALL_DIR="${HOME}/Applications"
 INSTALLED_APP="${INSTALL_DIR}/${APP_NAME}"
 LEGACY_APP="/Applications/${APP_NAME}"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 cd "${ROOT_DIR}"
 
@@ -47,8 +48,19 @@ echo "Installing to ${INSTALLED_APP}..."
 mkdir -p "${INSTALL_DIR}"
 pkill -x CodexQuota 2>/dev/null || true
 pkill -x CodexQuotaWidget 2>/dev/null || true
+
+if [[ -x "${LSREGISTER}" ]]; then
+  "${LSREGISTER}" -u "${BUILT_APP}" 2>/dev/null || true
+  for trashed_app in "${HOME}"/.Trash/CodexQuota*.app(N); do
+    "${LSREGISTER}" -u "${trashed_app}" 2>/dev/null || true
+  done
+fi
+
 if [[ -d "${LEGACY_APP}" && "${LEGACY_APP}" != "${INSTALLED_APP}" ]]; then
   echo "Removing legacy install at ${LEGACY_APP}..."
+  if [[ -x "${LSREGISTER}" ]]; then
+    "${LSREGISTER}" -u "${LEGACY_APP}" 2>/dev/null || true
+  fi
   if ! rm -rf "${LEGACY_APP}" 2>/dev/null; then
     echo "Could not remove ${LEGACY_APP}."
     echo "If widgets still load an old version, run:"
@@ -57,6 +69,13 @@ if [[ -d "${LEGACY_APP}" && "${LEGACY_APP}" != "${INSTALLED_APP}" ]]; then
 fi
 rm -rf "${INSTALLED_APP}"
 ditto "${BUILT_APP}" "${INSTALLED_APP}"
+
+if [[ -x "${LSREGISTER}" ]]; then
+  echo "Refreshing app and widget registration..."
+  "${LSREGISTER}" -f "${INSTALLED_APP}" 2>/dev/null || true
+fi
+
+killall chronod 2>/dev/null || true
 
 echo "Opening Codex Quota..."
 open "${INSTALLED_APP}"

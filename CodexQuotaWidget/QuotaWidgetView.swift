@@ -7,6 +7,17 @@ struct QuotaWidgetView: View {
     var entry: CodexQuotaEntry
 
     var body: some View {
+        Link(destination: WidgetRefreshLink.url) {
+            content
+        }
+        .buttonStyle(.plain)
+        .widgetURL(WidgetRefreshLink.url)
+        .containerBackground(for: .widget) {
+            widgetBackground
+        }
+    }
+
+    private var content: some View {
         Group {
             switch family {
             case .systemMedium:
@@ -15,10 +26,6 @@ struct QuotaWidgetView: View {
                 smallLayout
             }
         }
-        .containerBackground(for: .widget) {
-            widgetBackground
-        }
-        .widgetURL(WidgetRefreshLink.url)
     }
 
     private var smallLayout: some View {
