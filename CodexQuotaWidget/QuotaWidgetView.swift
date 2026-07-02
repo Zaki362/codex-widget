@@ -18,6 +18,7 @@ struct QuotaWidgetView: View {
         .containerBackground(for: .widget) {
             widgetBackground
         }
+        .widgetURL(WidgetRefreshLink.url)
     }
 
     private var smallLayout: some View {
@@ -71,6 +72,10 @@ struct QuotaWidgetView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .lineLimit(1)
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary.opacity(0.78))
+                .accessibilityLabel("点击刷新")
         }
     }
 
@@ -135,6 +140,10 @@ struct QuotaWidgetView: View {
         return formatter.string(from: entry.snapshot.updatedAt)
     }
 
+}
+
+private enum WidgetRefreshLink {
+    static let url = URL(string: "codexquota://refresh")!
 }
 
 private struct WidgetLimitRow: View {

@@ -34,4 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await refreshController.refresh()
         }
     }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "codexquota" && $0.host == "refresh" }) else {
+            return
+        }
+
+        Task { @MainActor [refreshController] in
+            await refreshController.refresh()
+        }
+    }
 }
